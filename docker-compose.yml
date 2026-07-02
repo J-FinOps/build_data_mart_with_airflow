@@ -41,7 +41,28 @@ services:
     networks:
       - finops-network
 
-  # 2. Apache Airflow
+
+  # 2. Airflow DB 초기화
+  airflow-init:
+    image: apache/airflow:2.7.1-python3.9
+    container_name: airflow-init
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./db:/opt/airflow/db
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/db/airflow.db
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    # 엔트리포인트를 명시적으로 경유하여 명령어 실행
+    entrypoint: [ "/entrypoint" ]
+    command: >
+      bash -c "airflow db init &&
+               airflow users create --username admin --password admin --firstname Anonymous --lastname Admin --role Admin --email admin@example.com"
+    networks:
+      - finops-network
+
+  # 3. Apache Airflow
   airflow-webserver:
     image: apache/airflow:2.7.1-python3.9
     container_name: airflow-webserver
@@ -51,13 +72,17 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
+      - ./db:/opt/airflow/db
     environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/db/airflow.db
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
-      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    # 공식 entrypoint 스크립트를 명확히 선언하고 파라미터로 webserver 전달
+    entrypoint: [ "/entrypoint" ]
     command: webserver
     depends_on:
-      - namenode
+      airflow-init:
+        condition: service_completed_successfully
     networks:
       - finops-network
 
@@ -68,14 +93,15 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
+      - ./db:/opt/airflow/db
     environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/db/airflow.db
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
-      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    entrypoint: [ "/entrypoint" ]
     command: scheduler
-    user: "root"
-    entrypoint: ["/bin/bash", "-c", "pip install apache-airflow-providers-apache-spark && airflow db init && airflow users create --username admin --password admin --firstname Anonymous --lastname Admin --role Admin --email admin@example.com && airflow scheduler"]
     depends_on:
-      - airflow-webserver
+      airflow-init:
+        condition: service_completed_successfully
     networks:
       - finops-network
