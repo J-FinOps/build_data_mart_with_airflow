@@ -1,0 +1,81 @@
+networks:
+  finops-network:
+    driver: bridge
+
+volumes:
+  hadoop_namenode:
+  hadoop_datanode:
+
+services:
+  # 1. HDFS
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    restart: always
+    ports:
+      - "9870:9870"
+      - "9820:9820"
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+    environment:
+      - CLUSTER_NAME=finops_cluster
+    env_file:
+      - ./hadoop.env
+    networks:
+      - finops-network
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    restart: always
+    ports:
+      - "9864:9864"
+    volumes:
+      - hadoop_datanode:/hadoop/dfs/data
+    environment:
+      - SERVICE_PRECONDITION="namenode:9870"
+    env_file:
+      - ./hadoop.env
+    depends_on:
+      - namenode
+    networks:
+      - finops-network
+
+  # 2. Apache Airflow
+  airflow-webserver:
+    image: apache/airflow:2.7.1-python3.9
+    container_name: airflow-webserver
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    command: webserver
+    depends_on:
+      - namenode
+    networks:
+      - finops-network
+
+  airflow-scheduler:
+    image: apache/airflow:2.7.1-python3.9
+    container_name: airflow-scheduler
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    command: scheduler
+    user: "root"
+    entrypoint: ["/bin/bash", "-c", "pip install apache-airflow-providers-apache-spark && airflow db init && airflow users create --username admin --password admin --firstname Anonymous --lastname Admin --role Admin --email admin@example.com && airflow scheduler"]
+    depends_on:
+      - airflow-webserver
+    networks:
+      - finops-network
