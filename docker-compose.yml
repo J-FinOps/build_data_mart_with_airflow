@@ -33,7 +33,7 @@ services:
     volumes:
       - hadoop_datanode:/hadoop/dfs/data
     environment:
-      - SERVICE_PRECONDITION="namenode:9870"
+      - SERVICE_PRECONDITION=namenode:9870
     env_file:
       - ./hadoop.env
     depends_on:
@@ -42,10 +42,28 @@ services:
       - finops-network
 
 
-  # 2. Airflow DB 초기화
+  # 2. HDFS Directory Setup
+  hdfs-directory-setup:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: hdfs-directory-setup
+    depends_on:
+      - namenode
+    networks:
+      - finops-network
+    env_file:
+      - ./hadoop.env
+    volumes:
+      - ./dags/setup_hdfs.sh:/setup_hdfs.sh
+    command: ["/bin/bash", "/setup_hdfs.sh"]
+
+  # 3. Airflow DB 초기화
   airflow-init:
-    image: apache/airflow:2.7.1-python3.9
+    build: .
     container_name: airflow-init
+    depends_on:
+      hdfs-directory-setup:
+        condition: service_completed_successfully
+
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
@@ -64,7 +82,7 @@ services:
 
   # 3. Apache Airflow
   airflow-webserver:
-    image: apache/airflow:2.7.1-python3.9
+    build: .
     container_name: airflow-webserver
     ports:
       - "8080:8080"
@@ -87,7 +105,7 @@ services:
       - finops-network
 
   airflow-scheduler:
-    image: apache/airflow:2.7.1-python3.9
+    build: .
     container_name: airflow-scheduler
     volumes:
       - ./dags:/opt/airflow/dags
