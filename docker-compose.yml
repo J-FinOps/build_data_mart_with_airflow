@@ -5,11 +5,33 @@ networks:
 volumes:
   hadoop_namenode:
   hadoop_datanode:
+  postgres_data: 
 
 services:
+  # 0. PostgreSQL Metadata Database
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - finops-network
+
   # 1. HDFS
   namenode:
-    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    build:
+      context: .
+      dockerfile: Dockerfile.hadoop-java11
+      args:
+        - BASE_IMAGE=bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java11
     container_name: namenode
     restart: always
     ports:
@@ -25,7 +47,12 @@ services:
       - finops-network
 
   datanode:
-    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    build:
+      context: .
+      dockerfile: Dockerfile.hadoop-java11
+      args:
+        - BASE_IMAGE=bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java11
     container_name: datanode
     restart: always
     ports:
@@ -33,7 +60,7 @@ services:
     volumes:
       - hadoop_datanode:/hadoop/dfs/data
     environment:
-      - SERVICE_PRECONDITION=namenode:9870
+      - SERVICE_PRECONDITION=namenode:9820
     env_file:
       - ./hadoop.env
     depends_on:
@@ -41,10 +68,60 @@ services:
     networks:
       - finops-network
 
+  # YARN Resource Manager
+  resourcemanager:
+    build:
+      context: .
+      dockerfile: Dockerfile.hadoop-java11
+      args:
+        - BASE_IMAGE=bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java11
+    container_name: resourcemanager
+    restart: always
+    ports:
+      - "8088:8088"
+    environment:
+      - SERVICE_PRECONDITION=namenode:9820 datanode:9864
+      - YARN_CONF_yarn_resourcemanager_scheduler_class=org.apache.hadoop.yarn.server.resourcemanager.scheduler.fifo.FifoScheduler
+      - YARN_CONF_yarn_scheduler_minimum___allocation___mb=1024
+      - YARN_CONF_yarn_scheduler_maximum___allocation___mb=4096
+    env_file:
+      - ./hadoop.env
+    networks:
+      - finops-network
+
+  # YARN Node Manager
+  nodemanager:
+    build:
+      context: .
+      dockerfile: Dockerfile.hadoop-java11
+      args:
+        - BASE_IMAGE=bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java11
+    container_name: nodemanager
+    restart: always
+    ports:
+      - "8042:8042"
+    environment:
+      - SERVICE_PRECONDITION=namenode:9820 datanode:9864 resourcemanager:8088
+      - YARN_CONF_yarn_nodemanager_resource_memory___mb=4096
+      - YARN_CONF_yarn_scheduler_minimum___allocation___mb=1024
+      - YARN_CONF_yarn_scheduler_maximum___allocation___mb=4096
+    env_file:
+      - ./hadoop.env
+    depends_on:
+      - resourcemanager
+    networks:
+      - finops-network
 
   # 2. HDFS Directory Setup
   hdfs-directory-setup:
-    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    build:
+      context: .
+      dockerfile: Dockerfile.hadoop-java11
+      args:
+        - BASE_IMAGE=bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java11
     container_name: hdfs-directory-setup
     depends_on:
       - namenode
@@ -54,6 +131,7 @@ services:
       - ./hadoop.env
     volumes:
       - ./dags/setup_hdfs.sh:/setup_hdfs.sh
+      - ./transactions_10k.csv:/transactions_10k.csv
     command: ["/bin/bash", "/setup_hdfs.sh"]
 
   # 3. Airflow DB 초기화
@@ -61,26 +139,29 @@ services:
     build: .
     container_name: airflow-init
     depends_on:
+      postgres:
+        condition: service_started
       hdfs-directory-setup:
         condition: service_completed_successfully
-
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
       - ./db:/opt/airflow/db
+      - ./hadoop-conf:/opt/hadoop/conf
     environment:
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/db/airflow.db
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
-    # 엔트리포인트를 명시적으로 경유하여 명령어 실행
+      - HADOOP_CONF_DIR=/opt/hadoop/conf
     entrypoint: [ "/entrypoint" ]
     command: >
-      bash -c "airflow db init &&
+      bash -c "until nc -z postgres 5432; do echo 'waiting for postgres...'; sleep 3; done &&
+               airflow db init &&
                airflow users create --username admin --password admin --firstname Anonymous --lastname Admin --role Admin --email admin@example.com"
     networks:
       - finops-network
 
-  # 3. Apache Airflow
+  # 4. Apache Airflow Webserver
   airflow-webserver:
     build: .
     container_name: airflow-webserver
@@ -91,19 +172,23 @@ services:
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
       - ./db:/opt/airflow/db
+      - ./hadoop-conf:/opt/hadoop/conf
     environment:
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/db/airflow.db
-      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
-    # 공식 entrypoint 스크립트를 명확히 선언하고 파라미터로 webserver 전달
+      - HADOOP_CONF_DIR=/opt/hadoop/conf
     entrypoint: [ "/entrypoint" ]
     command: webserver
     depends_on:
+      postgres:
+        condition: service_started
       airflow-init:
         condition: service_completed_successfully
     networks:
       - finops-network
 
+  # 5. Apache Airflow Scheduler
   airflow-scheduler:
     build: .
     container_name: airflow-scheduler
@@ -112,13 +197,17 @@ services:
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
       - ./db:/opt/airflow/db
+      - ./hadoop-conf:/opt/hadoop/conf
     environment:
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/db/airflow.db
-      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - HADOOP_CONF_DIR=/opt/hadoop/conf
     entrypoint: [ "/entrypoint" ]
     command: scheduler
     depends_on:
+      postgres:
+        condition: service_started
       airflow-init:
         condition: service_completed_successfully
     networks:

@@ -1,0 +1,27 @@
+ARG BASE_IMAGE=bde2020/hadoop-base:2.0.0-hadoop3.2.1-java8
+FROM $BASE_IMAGE
+
+USER root
+
+# Update APT sources to point to archive.debian.org as Debian 9 Stretch is EOL
+# and install openjdk-11-jre-headless from stretch-backports
+RUN sed -i 's/deb.debian.org/archive.debian.org/g' /etc/apt/sources.list && \
+    sed -i 's|security.debian.org/debian-security|archive.debian.org/debian-security|g' /etc/apt/sources.list && \
+    sed -i '/stretch-updates/d' /etc/apt/sources.list && \
+    echo "deb http://archive.debian.org/debian stretch-backports main" > /etc/apt/sources.list.d/backports.list && \
+    apt-get update -o Acquire::Check-Valid-Until=false && \
+    apt-get install -y -o Acquire::Check-Valid-Until=false -t stretch-backports openjdk-11-jre-headless && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Override JAVA_HOME to use Java 11
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+ENV PATH=$JAVA_HOME/bin:$PATH
+
+# Download JAXB and JavaBeans Activation Framework JARs because Java 11
+# removed EE modules, causing ClassNotFoundException: javax.activation.DataSource in YARN
+RUN curl -sSLo /opt/hadoop-3.2.1/share/hadoop/common/lib/javax.activation-api-1.2.0.jar https://repo1.maven.org/maven2/javax/activation/javax.activation-api/1.2.0/javax.activation-api-1.2.0.jar && \
+    curl -sSLo /opt/hadoop-3.2.1/share/hadoop/common/lib/jaxb-api-2.3.1.jar https://repo1.maven.org/maven2/javax/xml/bind/jaxb-api/2.3.1/jaxb-api-2.3.1.jar && \
+    curl -sSLo /opt/hadoop-3.2.1/share/hadoop/common/lib/jaxb-core-2.3.0.1.jar https://repo1.maven.org/maven2/com/sun/xml/bind/jaxb-core/2.3.0.1/jaxb-core-2.3.0.1.jar && \
+    curl -sSLo /opt/hadoop-3.2.1/share/hadoop/common/lib/jaxb-impl-2.3.1.jar https://repo1.maven.org/maven2/com/sun/xml/bind/jaxb-impl/2.3.1/jaxb-impl-2.3.1.jar && \
+    curl -sSLo /opt/hadoop-3.2.1/share/hadoop/common/lib/activation-1.1.1.jar https://repo1.maven.org/maven2/javax/activation/activation/1.1.1/activation-1.1.1.jar
