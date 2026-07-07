@@ -8,9 +8,9 @@ hdfs dfs -mkdir -p /user/airflow/warehouse
 hdfs dfs -mkdir -p /user/hive/warehouse
 hdfs dfs -mkdir -p /user/hive/warehouse/raw_accounting
 
-if [ -f /transactions_100k.csv ]; then
-  echo "Uploading transactions_100k.csv to HDFS..."
-  hdfs dfs -put -f /transactions_100k.csv /user/hive/warehouse/raw_accounting/transactions_100k.csv
+if [ -f /transactions_10k.csv ]; then
+  echo "Uploading transactions_10k.csv to HDFS..."
+  hdfs dfs -put -f /transactions_10k.csv /user/hive/warehouse/raw_accounting/transactions_10k.csv
 fi
 
 hdfs dfs -chown -R airflow:supergroup /user/airflow

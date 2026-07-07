@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from airflow.decorators import dag
+from airflow.decorators import dag, task
 from airflow.operators.bash import BashOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 
@@ -48,6 +48,38 @@ def accounting_fds_dag():
         }
     )
 
-    check_hdfs_storage >> execute_fds_logic
+    # 3. HDFS 결과를 로컬 호스트 마운트 폴더로 복사 위임 태스크 (PySpark Local Mode)
+    @task
+    def export_to_local():
+        import os
+        import shutil
+        from pyspark.sql import SparkSession
+        
+        # 로컬 쓰기이므로 YARN이 아닌 local[*] 모드로 드라이버 내에서 가동
+        spark = SparkSession.builder \
+            .appName("ExportHDFSToLocal") \
+            .master("local[*]") \
+            .getOrCreate()
+            
+        hdfs_path = "hdfs://namenode:9820/user/airflow/warehouse/fact_accounting"
+        local_path = "file:///opt/airflow/exported_data/fact_accounting"
+        clean_path = "/opt/airflow/exported_data/fact_accounting"
+        
+        # 기존 로컬 디렉토리가 있다면 안전하게 비워 전처리 진행
+        if os.path.exists(clean_path):
+            try:
+                shutil.rmtree(clean_path)
+            except Exception as e:
+                print(f"Error cleaning directory: {e}")
+                
+        # HDFS Parquet 데이터를 읽어서 로컬 호스트 볼륨에 '거래일자' 기준 파티션 쓰기
+        print("Reading Parquet from HDFS and writing to local volume...")
+        df = spark.read.parquet(hdfs_path)
+        df.write.mode("overwrite").partitionBy("거래일자").parquet(local_path)
+        
+        print("Successfully exported HDFS parquet files to local host directory!")
+        spark.stop()
+
+    check_hdfs_storage >> execute_fds_logic >> export_to_local()
 
 accounting_pipeline = accounting_fds_dag()

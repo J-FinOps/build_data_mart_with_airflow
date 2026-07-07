@@ -7,3 +7,4 @@ hadoop.env
 .vscode/
 *.txt
 __pycache__/
+exported_data/

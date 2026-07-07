@@ -149,6 +149,7 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ./db:/opt/airflow/db
       - ./hadoop-conf:/opt/hadoop/conf
+      - ./exported_data:/opt/airflow/exported_data
     environment:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
@@ -173,6 +174,7 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ./db:/opt/airflow/db
       - ./hadoop-conf:/opt/hadoop/conf
+      - ./exported_data:/opt/airflow/exported_data
     environment:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
@@ -198,6 +200,7 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ./db:/opt/airflow/db
       - ./hadoop-conf:/opt/hadoop/conf
+      - ./exported_data:/opt/airflow/exported_data
     environment:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
